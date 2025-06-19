@@ -1,0 +1,821 @@
+<html>
+
+<head>
+  <meta charset="UTF-8">
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://d3js.org/topojson.v3.min.js"></script>
+  <script src="index.js"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap">
+  <p style="font-style: italic">
+    Yama Bazger (mb2482@cornell.edu), Aleksandra Marjanovic (am2445@cornell.edu), Rigel Wafford (rcw248@cornell.edu), and Shreya Tuli (st783@cornell.edu).
+  </p>
+  <style>
+    .country {
+      fill: lightgrey;
+    }
+
+    .outline {
+      fill: none;
+      stroke: black;
+      stroke-width: 1px;
+    }
+
+    .slider {
+      width: 300px;
+      margin: 10px;
+    }
+
+    .map-container {
+      display: flex;
+      flex-direction: column;
+      align-items: left;
+    }
+
+    .title {
+      text-align: center;
+      margin: 20px;
+      font-family: 'Times New Roman', sans-serif;
+      font-size: 2.5em;
+      font-weight: 700;
+      color: black;
+    }
+
+    .subtitle {
+      font-size: 1.2em;
+      font-weight: 400;
+      color: black;
+      margin-top: 5px;
+      text-align: center;
+      font-family: 'Times New Roman', sans-serif;
+    }
+
+    .slider-container {
+      text-align: center;
+    }
+
+    .tooltip {
+      position: absolute;
+      background-color: white;
+      border: 1px solid #ccc;
+      padding: 5px;
+      border-radius: 5px;
+      font-size: 12px;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    .gridlines .domain {
+      display: none;
+    }
+
+    .chart-container {
+      display: flex;
+      justify-content: space-around;
+      gap: 20px;
+    }
+
+    .map-scatterplot-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-top: 20px;
+    }
+
+    .subtitle {
+      margin-top: 20px;
+    }
+
+    .subtitle-2 {
+      margin-top: 20px;
+      font-size: 1.3em;
+      text-align: center;
+    }
+
+    #secondsub {
+      margin-top: 50px;
+    }
+
+    .lineplotgrids .tick line {
+      stroke: #585858;
+      stroke-dasharray: 5 5;
+      opacity: 0.35;
+    }
+  </style>
+</head>
+
+<body>
+  <h1 class="title">Urbanization and Health in the 2010s</h1>
+  <h2 class="subtitle">Visualizing changes in air quality and life expectancy. </h2>
+
+  <div class="slider-container">
+    <label for="yearSlider">Year (2010-2019): </label>
+    <input type="range" id="yearSlider" min="2010" max="2019" step="1" value="2010" class="slider">
+    <span id="currentYear">2010</span>
+  </div>
+
+  <div class="map-scatterplot-container">
+    <div class="map-container">
+      <svg id="choropleth" height="500" width="750"></svg>
+      <svg id="colorLegend" height="50" width="630" style="background: #fff; margin-left:60px;"></svg>
+    </div>
+
+    <div id="scatterplot-container" style="margin-top: 50px;"></div>
+    <svg id="scatterplot" width="500" height="500"></svg>
+    <div class="tooltip" style="opacity: 0;"></div>
+  </div>
+
+  <h2 class="subtitle" id="secondsub" style="margin-left: 20px; margin-right: 20px;">The ten countries with the highest air pollution concentration are represented
+    below. The goal was to show correlation by checking if life expectancy and air pollution concentration changed
+    through
+    an inverse relationship. However, the line plots show that there might be other, more immediate, variables that play
+    a major role
+    with life expectancy. Similarly, life expectancy does not fluctuate significantly, thus sensitivity to change (such
+    as in air pollution concentration) is difficult to capture. Nonetheless, it still provides an insight about
+    countries with high air pollution
+    concentration and life expectancy - and the outliers such as Qatar and Kuwait. </h2>
+  <h2 class="subtitle-2" id="secondsub">Life Expectancy (left) and Air Pollution Concentration (&#181;g/m&#179;) (right)
+    for the Top Ten Countries with the Highest Air Pollution Concentration</h2>
+
+  <div class="chart-container">
+    <svg id="lineplot1" height="500" width="600"></svg>
+    <svg id="lineplot2" height="500" width="600"></svg>
+  </div>
+
+  <svg id="plotlegend" height="100" width="1000"></svg>
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+    // Constants for chloropleth
+    const svg = d3.select("#choropleth");
+    const width = svg.attr("width");
+    const height = svg.attr("height");
+    const margins = { top: 20, right: 70, bottom: 0, left: 50 };
+    const chartWidth = width - margins.left - margins.right;
+    const chartHeight = height - margins.top - margins.bottom;
+    const map = svg.append("g")
+      .attr("transform", `translate(${margins.left},${margins.top})`);
+
+    // Load data for chloropleth
+    async function load() {
+      const keyPopulation = "population";
+      const keyLifeExpectancy = "life_expectancy";
+      const keyAirPollution = "air_pollution";
+      const minYear = 2010;
+      const maxYear = 2019;
+
+      data = await getData();
+
+      const worldTopoJSON = await d3.json("countries-110m.json");
+
+      // Pick out topographic features, excluding Antartica
+      const worldData = topojson.feature(worldTopoJSON, worldTopoJSON.objects.countries);
+      const filteredFeatures = worldData.features.filter(d => d.id !== "010");
+
+      const filteredCountries = worldTopoJSON.objects.countries.geometries.filter(d => d.properties.name !== "Antarctica");
+      worldTopoJSON.objects.countries.geometries = filteredCountries;
+
+      // Make a mesh of all country outlines for a stroke, excluding Antartica
+      var countriesMesh = topojson.mesh(worldTopoJSON, worldTopoJSON.objects.countries);
+
+      // Create map projection and path
+      var projection = d3.geoMercator().fitSize([chartWidth, chartHeight], { type: "FeatureCollection", features: filteredFeatures });
+      var path = d3.geoPath().projection(projection);
+
+      // Draw map and outlines
+      map.selectAll("path.country")
+        .data(filteredFeatures)
+        .join("path")
+        .attr("class", "country")
+        .attr("note", d => d.id)
+        .attr("d", path)
+        .on("mouseover", mouseEnterCountry)
+        .on("mousemove", function (event) {
+          d3.select("#tooltip")
+            .style("left", (event.pageX + 10) + "px")
+            .style("top", (event.pageY - 20) + "px");
+        })
+        .on("mouseout", mouseLeaveCountry);
+
+      map.append("path").datum(countriesMesh)
+        .attr("class", "outline")
+        .style("fill", "none")
+        .style("stroke", "black")
+        .style("stroke-width", "1px")
+        .attr("d", path);
+
+      // Go through each country and year to get the extent of the data
+      function AirPollutionExtent(data) {
+        const values = [];
+        Object.values(data).forEach(countryData => {
+          Object.values(countryData).forEach(yearData => {
+            if (yearData[keyAirPollution]) {
+              values.push(parseFloat(yearData[keyAirPollution]));
+            }
+          });
+        });
+
+        return d3.extent(values);
+      }
+
+      // Create red tinted color scale based on air pollution values
+      function createColorScale(data) {
+        const airExtent = AirPollutionExtent(data);
+        const colorScale = d3.scaleQuantile()
+          .domain(airExtent)
+          .range(["#fee5d9", "#fbb3a3", "#f57b75", "#f14447", "#e5111f", "#c30000", "#8b0000", "#4d0000"]);
+
+        return colorScale;
+      }
+
+      // Add slider interactions
+      let selectedYear = minYear;
+      d3.select("#yearSlider").on("input.choropleth", function () {
+        selectedYear = this.value;
+        d3.select("#currentYear").text(selectedYear);
+        updateChoropleth(selectedYear, data, colorScale);
+      });
+
+      // Initiate chloropleth with first year (2010)
+      const colorScale = createColorScale(data);
+      updateChoropleth(minYear, data, createColorScale(data));
+
+      // Fix country names that don't match between air pollution data and topoJSON file  
+      function fixCountryName(name) {
+        if (name === "United States of America") {
+          return "United States";
+        }
+        if (name === "Dominican Rep.") {
+          return "Dominican Republic";
+        }
+        if (name === "Dem. Rep. Congo") {
+          return "Democratic Republic of Congo";
+        }
+        if (name === "Central African Rep.") {
+          return "Central African Republic";
+        }
+        if (name === "Bosnia and Herz.") {
+          return "Bosnia and Herzegovina";
+        }
+        if (name === "Macedonia") {
+          return "North Macedonia";
+        }
+        return name;
+      }
+
+      // Update chloropleth with each year's data
+      function updateChoropleth(year, data, colorScale) {
+        map.selectAll(".country")
+          .transition().duration(200)
+          .style("fill", function (d) {
+            const countryName = fixCountryName(d.properties.name);
+            const countryData = data[countryName];
+            if (countryData && countryData[year] && countryData[year][keyAirPollution]) {
+              const airPollution = countryData[year][keyAirPollution];
+              return colorScale(airPollution);
+            } else {
+              return "#ccc";
+            }
+          });
+      }
+
+      // Draw a legend for to show air pollution colors and their values
+      drawLegend("#colorLegend", colorScale);
+
+      // Draw map title
+      svg.append("text")
+        .attr("class", "map-title")
+        .attr("x", (width / 2))
+        .attr("y", margins.top + 10)
+        .style("text-anchor", "middle")
+        .style("font-size", "20px")
+        .style("font-weight", "bold")
+        .style("fill", "black")
+        .text("World Air Pollution Concentration Levels");
+
+      // Create mouseover functions
+      function mouseEnterCountry(event, d) {
+        const countryName = fixCountryName(d.properties.name);
+        const airPollution = data[countryName] && data[countryName][selectedYear]
+          ? data[countryName][selectedYear][keyAirPollution]
+          : "No data";
+
+        const tooltip = d3.select("#tooltip");
+        tooltip
+          .html(`<strong>Country:</strong> ${countryName}<br>
+           <strong>Air Pollution:</strong> ${airPollution !== "No data" ? airPollution + " &#181;g/m&#179;": "No data available"}`)
+          .transition().duration(200)
+          .style("opacity", 1)
+          .style("left", (event.pageX + 10) + "px")
+          .style("top", (event.pageY - 20) + "px");
+
+        d3.select(this).transition().duration(200).style("fill", "#FFFFED");
+
+        tooltip.raise();
+      }
+
+      function mouseLeaveCountry(event, d) {
+        const countryName = fixCountryName(d.properties.name);
+        const airPollution = data[countryName] && data[countryName][selectedYear]
+          ? data[countryName][selectedYear][keyAirPollution]
+          : null;
+
+        d3.select(this)
+          .transition().duration(200)
+          .style("fill", function () {
+            if (airPollution !== null) {
+              return colorScale(airPollution);
+            } else {
+              return "#ccc";
+            }
+          });
+
+        d3.select("#tooltip")
+          .transition().duration(200)
+          .style("opacity", 0);
+      }
+
+    }
+
+    // Credit to Prof. Rz for legend code
+    function drawLegend(legendSelector, legendColorScale) {
+      const offsets = {
+        width: 10,
+        top: 2,
+        bottom: 24
+      };
+      const stepSize = 4;
+      const minMaxExtendPercent = 0;
+
+
+      const legend = d3.select(legendSelector);
+      const legendHeight = legend.attr("height");
+      const legendBarWidth = legend.attr("width") - (offsets.width * 2);
+      const legendMinMax = d3.extent(legendColorScale.domain());
+      const minMaxExtension = (legendMinMax[1] - legendMinMax[0]) * minMaxExtendPercent;
+      const barHeight = legendHeight - offsets.top - offsets.bottom;
+
+      let barScale = d3.scaleLinear().domain([legendMinMax[0] - minMaxExtension,
+      legendMinMax[1] + minMaxExtension])
+        .range([0, legendBarWidth]);
+      let barAxis = d3.axisBottom(barScale);
+
+      let bar = legend.append("g")
+        .attr("class", "legend colorbar")
+        .attr("transform", `translate(${offsets.width},${offsets.top})`)
+
+      if (legendColorScale.hasOwnProperty('thresholds') || legendColorScale.hasOwnProperty('quantiles')) {
+        let thresholds = [];
+        if (legendColorScale.hasOwnProperty('thresholds')) { thresholds = legendColorScale.thresholds() }
+        else { thresholds = legendColorScale.quantiles() }
+
+        const barThresholds = [legendMinMax[0], ...thresholds, legendMinMax[1]];
+
+        barAxis.tickValues(barThresholds);
+
+        for (let i = 0; i < barThresholds.length - 1; i++) {
+          let dataStart = barThresholds[i];
+          let dataEnd = barThresholds[i + 1];
+          let pixelStart = barAxis.scale()(dataStart);
+          let pixelEnd = barAxis.scale()(dataEnd);
+
+          bar.append("rect")
+            .attr("x", pixelStart)
+            .attr("y", 0)
+            .attr("width", pixelEnd - pixelStart)
+            .attr("height", barHeight)
+            .style("fill", legendColorScale((dataStart + dataEnd) / 2.0));
+        }
+      }
+      else if (legendColorScale.hasOwnProperty('rangeRound')) {
+        for (let i = 0; i < legendBarWidth; i = i + stepSize) {
+
+          let center = i + (stepSize / 2);
+          let dataCenter = barAxis.scale().invert(center);
+
+          if (dataCenter < legendMinMax[0]) {
+            bar.append("rect")
+              .attr("x", i)
+              .attr("y", 0)
+              .attr("width", stepSize)
+              .attr("height", barHeight)
+              .style("fill", legendColorScale(legendMinMax[0]));
+          }
+          else if (dataCenter < legendMinMax[1]) {
+            bar.append("rect")
+              .attr("x", i)
+              .attr("y", 0)
+              .attr("width", stepSize)
+              .attr("height", barHeight)
+              .style("fill", legendColorScale(dataCenter));
+          }
+          else {
+            bar.append("rect")
+              .attr("x", i)
+              .attr("y", 0)
+              .attr("width", stepSize)
+              .attr("height", barHeight)
+              .style("fill", legendColorScale(legendMinMax[1]));
+          }
+
+        }
+      }
+      else {
+        let nomVals = legendColorScale.domain().sort();
+
+        let barScale = d3.scaleBand().domain(nomVals)
+          .range([0, legendBarWidth])
+          .padding(0.05);
+        barAxis.scale(barScale);
+
+        nomVals.forEach(d => {
+          bar.append("rect")
+            .attr("x", barScale(d))
+            .attr("y", 0)
+            .attr("width", barScale.bandwidth())
+            .attr("height", barHeight)
+            .style("fill", legendColorScale(d));
+        });
+      }
+
+      legend.append("g")
+        .attr("class", "legend axis")
+        .attr("transform", `translate(${offsets.width},${offsets.top + barHeight + 5})`)
+        .call(barAxis);
+
+    }
+
+    // Call function to draw chloropleth
+    load();
+
+    // Constants for scatterplot
+    const svg_scatter = d3.select("#scatterplot");
+
+    const width_sc = svg_scatter.attr("width");
+    const height_sc = svg_scatter.attr("height");
+    const margin_sc = { top: 50, right: 50, bottom: 40, left: 40 };
+    const tooltip_scatter = d3.select(".tooltip");
+
+    // Load data for scatterplot
+    async function createScatterPlot(year) {
+      const minYear = 2010;
+      const maxYear = 2019;
+      data = await getData();
+
+      const yearData = [];
+      Object.keys(data).forEach(key => {
+        yearData.push({ "Entity": key, "Air Pollution": data[key][year][keyAirPollution()], "LifeExpectancy": data[key][year][keyLifeExpectancy()] })
+      });
+
+      // Create scale for x-axis
+      const xScale = d3.scaleLinear()
+        .domain([0, d3.max(yearData, d => d["Air Pollution"])])
+        .range([margin_sc.left, width_sc - margin_sc.right]);
+
+      // Create scale for y-axis
+      const yScale = d3.scaleLinear()
+        .domain([d3.min(yearData, d => d["LifeExpectancy"]) - 5, d3.max(yearData, d => d["LifeExpectancy"]) + 5])
+        .range([height_sc - margin_sc.bottom, margin_sc.top]);
+
+      const xAxis = d3.axisBottom(xScale).ticks(10);
+      const yAxis = d3.axisLeft(yScale).ticks(10);
+
+      // Create X-Axis labels
+      svg_scatter.append("g")
+        .attr("transform", `translate(0, ${height_sc - margin_sc.bottom})`)
+        .attr("id", "xaxis")
+        .call(xAxis)
+        .append("text")
+        .attr("x", width_sc / 2)
+        .attr("y", margin_sc.bottom - 5)
+        .attr("fill", "black")
+        .attr("text-anchor", "middle")
+        .style("font-size", "14px")
+        .style("font-family", "Times New Roman")
+        .text("Air Pollution Concentration (PM2.5)");
+
+      // Create Y-Axis labels
+      svg_scatter.append("g")
+        .attr("transform", `translate(${margin_sc.left}, 0)`)
+        .attr("id", "yaxis")
+        .call(yAxis)
+        .append("text")
+        .attr("transform", "rotate(-90)")
+        .attr("x", -height_sc / 2)
+        .attr("y", margin_sc.left - 70)
+        .attr("fill", "black")
+        .style("font-size", "14px")
+        .style("font-family", "Times New Roman")
+        .attr("text-anchor", "middle")
+        .text("Life Expectancy (Years)");
+
+      // Draw scatterplot title
+      svg_scatter.append("text")
+        .attr("class", "scatterplot-title")
+        .attr("x", (width_sc / 2))
+        .attr("y", margin_sc.top - 15)
+        .style("text-anchor", "middle")
+        .style("font-size", "20px")
+        .style("font-weight", "bold")
+        .style("fill", "black")
+        .text("World Air Pollution Concentration vs Life Expectancy");
+
+      // Add slider functionality
+      let selectedYear = minYear;
+      d3.select("#yearSlider").on("input.bubbles", function () {
+        selectedYear = this.value;
+        updateGraph(selectedYear);
+      });
+
+      // Update graph with slider movements
+      function updateGraph(selectedYear) {
+        const yearData = [];
+        Object.keys(data).forEach(key => {
+          yearData.push({ "Entity": key, "Air Pollution": data[key][selectedYear][keyAirPollution()], "LifeExpectancy": data[key][selectedYear][keyLifeExpectancy()] })
+        });
+
+        const xScale = d3.scaleLinear()
+          .domain([0, d3.max(yearData, d => d["Air Pollution"])])
+          .range([margin_sc.left, width_sc - margin_sc.right]);
+
+        const yScale = d3.scaleLinear()
+          .domain([d3.min(yearData, d => d["LifeExpectancy"]) - 5, d3.max(yearData, d => d["LifeExpectancy"]) + 5])
+          .range([height_sc - margin_sc.bottom, margin_sc.top]);
+
+        const colorScale = d3.scaleQuantile()
+          .domain(d3.extent(yearData, d => d["Air Pollution"]))
+          .range(["#fee5d9", "#fbb3a3", "#f57b75", "#f14447", "#e5111f", "#c30000", "#8b0000", "#4d0000"]);
+
+        const xAxis = d3.axisBottom(xScale).ticks(10);
+        const yAxis = d3.axisLeft(yScale).ticks(10);
+
+        d3.select("#xaxis").transition().duration(200).call(xAxis);
+        d3.select("#yaxis").transition().duration(200).call(yAxis);
+
+        // Add circles & mouseover
+        svg_scatter.selectAll("circle")
+          .data(yearData)
+          .join("circle")
+          .on("mouseover", (event, d) => {
+            tooltip_scatter
+              .html(
+                `<strong>Country:</strong> ${d.Entity}<br>
+                  <strong>PM2.5:</strong> ${d["Air Pollution"]} &#181;g/m&#179;<br>
+                  <strong>Life Expectancy:</strong> ${d["LifeExpectancy"]} years`
+              )
+              .style("left", `${event.pageX + 10}px`) //source: https://observablehq.com/@clhenrick/tooltip-d3-convention
+              .style("top", `${event.pageY - 20}px`)
+              .transition().duration(200)
+              .style("opacity", 1);
+
+            d3.select(event.target).transition().duration(200)
+              .attr("r", 7)
+              .attr("fill", d => colorScale(d["Air Pollution"]));
+          })
+          .on("mousemove", event => {
+            tooltip_scatter
+              .style("left", `${event.pageX + 10}px`)
+              .style("top", `${event.pageY - 20}px`);
+          })
+          .on("mouseout", event => {
+            tooltip_scatter.transition().duration(200).style("opacity", 0);
+            d3.select(event.target).transition().duration(200)
+              .attr("r", 5)
+              .attr("fill", d => colorScale(d["Air Pollution"]));
+          })
+          .transition().duration(200)
+          .attr("cx", d => xScale(d["Air Pollution"]))
+          .attr("cy", d => yScale(d["LifeExpectancy"]))
+          .attr("r", 5)
+          .attr("fill", d => colorScale(d["Air Pollution"]));
+      }
+
+      updateGraph(year);
+
+    }
+
+    createScatterPlot(2010);
+
+    // Constants for line plots
+    const margin = { top: 10, right: 30, bottom: 50, left: 100 };
+    const colorScale = d3.scaleOrdinal(d3.schemeCategory10);
+    const tooltip = d3.select("#tooltip");
+
+    // list of ten countries with highest PM2.5 concentrations. This was analyzed using Python (refer to the attached jupyter file called "filtering.ipynb")
+    const selectedCountries = [
+      "Afghanistan",
+      "Kuwait",
+      "Tajikistan",
+      "Qatar",
+      "Egypt",
+      "Saudi Arabia",
+      "Cameroon",
+      "Nigeria",
+      "Pakistan",
+      "India"
+    ];
+
+    // This create a line plot. Intentionally modular as we wanted to visualize different variables.
+    function drawChart(svgId, csvFile, yLabel, yColumn) {
+      const svg = d3.select(svgId);
+      const width = svg.attr("width");
+      const height = svg.attr("height");
+      const chartWidth = width - margin.left - margin.right;
+      const chartHeight = height - margin.top - margin.bottom;
+
+      let annotations = svg.append("g").attr("id", "annotations");
+      let chartArea = svg.append("g").attr("id", "points")
+        .attr("transform", `translate(${margin.left},${margin.top})`);
+
+      // This loop basically extracts the countries that are in the selectedCountries array from the main sources 
+      getData().then(data => {
+        const graphData = [];
+
+        Object.keys(data).forEach(key => {
+          if (!selectedCountries.includes(key)) {
+            delete data[key];
+          } else {
+            for (const [yearKey, value] of Object.entries(data[key])) {
+              graphData.push({
+                "Entity": key, "Year": Number(yearKey), "Period life expectancy at birth - Sex: all - Age: 0": data[key][yearKey][keyLifeExpectancy()],
+                "Concentrations of fine particulate matter (PM2.5) - Residence area type: Total": data[key][yearKey][keyAirPollution()]
+              })
+            }
+          }
+        });
+
+        // This is the extent of the y axis;
+        const yExtent = d3.extent(graphData, d => d[yColumn]);
+        // scaler for the y-axis
+        const yScale = d3.scaleLinear().domain(yExtent).range([chartHeight, 0]);
+
+        // this is the extent for the x-axis
+        const yearExtent = d3.extent(graphData, d => d.Year);
+        // scaler for the x-axis
+        const yearScale = d3.scaleLinear().domain(yearExtent).range([0, chartWidth]);
+
+        // Create asxis and gridlines
+        let leftAxis = d3.axisLeft(yScale);
+        let leftGridlines = d3.axisLeft(yScale)
+          .tickSize(-chartWidth - 10)
+          .tickFormat("");
+
+        annotations.append("g")
+          .attr("class", "y axis")
+          .attr("transform", `translate(${margin.left - 10},${margin.top})`)
+          .call(leftAxis);
+
+        annotations.append("g")
+          .attr("class", "y gridlines lineplotgrids")
+          .attr("transform", `translate(${margin.left - 10},${margin.top})`)
+          .call(leftGridlines);
+
+        let bottomAxis = d3.axisBottom(yearScale).tickFormat(d3.format("d"));
+        let bottomGridlines = d3.axisBottom(yearScale)
+          .tickSize(-chartHeight - 10)
+          .tickFormat("");
+
+        annotations.append("g")
+          .attr("class", "x axis")
+          .attr("transform", `translate(${margin.left},${chartHeight + margin.top + 10})`)
+          .call(bottomAxis);
+
+        annotations.append("g")
+          .attr("class", "x gridlines lineplotgrids")
+          .attr("transform", `translate(${margin.left},${chartHeight + margin.top + 10})`)
+          .call(bottomGridlines);
+
+        annotations.append("text")
+          .attr("class", "y-label")
+          .attr("text-anchor", "middle")
+          .attr("transform", `translate(${margin.left - 60},${margin.top + chartHeight / 2}) rotate(-90)`)
+          .text(yLabel);
+
+        annotations.append("text")
+          .attr("class", "x-label")
+          .attr("text-anchor", "middle")
+          .attr("transform", `translate(${margin.left + chartWidth / 2},${chartHeight + margin.top + 50})`)
+          .text("Year");
+
+
+        // our line generator for the plots
+        // Credits to Professor Rez (https://jeffrz.github.io/info3300-fa2024/notes/24.09.30.notes.htm)
+        const lineGen = d3.line()
+          .x(d => yearScale(d.Year))
+          .y(d => yScale(d[yColumn]))
+          .curve(d3.curveMonotoneX);
+
+        // we are accessing the countries from graphData
+        const countries = d3.group(graphData, d => d.Entity);
+
+        // looping through the countries, adding them to chartArea
+        countries.forEach((values, countryName) => {
+          chartArea.append("path")
+            .datum(values)
+            .attr("d", lineGen)
+            .attr("fill", "none")
+            .attr("stroke", colorScale(countryName))
+            .attr("stroke-width", 2)
+            .attr("data-country", countryName);
+
+          // Added this at a later stage because I was not able to show the value for a given datapoint successfully before
+          // also: https://stackoverflow.com/questions/58701387/d3-js-select-node-element-based-on-attributes-value-using-selectall
+          chartArea.selectAll(`circle[data-country="${countryName}"]`)
+            .data(values)
+            .join("circle")
+            .attr("r", 4)
+            .attr("fill", colorScale(countryName))
+            .attr("data-country", countryName)
+            .attr("data-value", d => d[yColumn])
+            .attr("cx", d => yearScale(d.Year))
+            .attr("cy", d => yScale(d[yColumn]))
+            .call(addMouseEvents);
+        });
+
+        // Create legend
+        const legendMargin = { top: 20, left: 230 };
+        const legendSvg = d3.select("svg#plotlegend");
+        const legendWidth = legendSvg.attr("width");
+        const legendHeight = legendSvg.attr("height");
+
+        const legendGroup = legendSvg.append("g")
+          .attr("transform", `translate(${legendMargin.left}, ${legendMargin.top})`);
+
+        const legendItemWidth = 100;
+        const legendItemHeight = 20;
+
+
+        // looping through the array of countries 
+        selectedCountries.forEach((country, index) => {
+          // we are multiplying the index location (from the array) with the fixed width, offseting them horizontally
+          const x = index * legendItemWidth;
+          const y = 0;
+
+          // creates the rectangular objects colored appropriately - it should match the colors of the lines in the plots
+          legendGroup.append("rect")
+            .attr("x", x)
+            .attr("y", y)
+            .attr("width", legendItemHeight)
+            .attr("height", legendItemHeight)
+            .attr("fill", colorScale(country));
+
+          legendGroup.append("text")
+            .attr("x", x + legendItemHeight + 5)
+            .attr("y", y + legendItemHeight / 1.5)
+            .text(country)
+            .attr("font-size", "12px")
+            .attr("alignment-baseline", "middle");
+        });
+
+        // This function adds mouseEvents to the line plots
+        function addMouseEvents(selection) {
+          selection
+            .on("mouseover", function (event, d) {
+              const countryName = d3.select(this).attr("data-country");
+              const dataValue = d3.select(this).attr("data-value");
+              tooltip
+                .html( // the hardcoded bit
+                  `<strong>Country:</strong> ${d.Entity}<br>
+                  <strong>PM2.5:</strong> ${d["Concentrations of fine particulate matter (PM2.5) - Residence area type: Total"]} &#181;g/m&#179;<br>
+                  <strong>Life Expectancy:</strong> ${d["Period life expectancy at birth - Sex: all - Age: 0"]} years`
+                )
+                .transition().duration(200)
+                .style("opacity", 1);
+
+              d3.select(this)
+                .transition().duration(200)
+                .attr("r", 6)
+            })
+            .on("mousemove", function (event) {
+              tooltip
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 20) + "px");
+            })
+            .on("mouseout", function () {
+              tooltip.transition().duration(200).style("opacity", 0);
+              d3.select(this)
+                .transition().duration(200)
+                .attr("r", 4)
+            });
+        }
+
+      })
+    }
+    // This draws the charts; just put the relevant variables in, and if everything checks out, we should see a chart
+    // NOTE: the addMouseEvents function has hardcorded axes labels, however, so it must be adjusted accordingly.
+    drawChart(
+      "svg#lineplot1",
+      "life-expectancy.csv",
+      "Life Expectancy",
+      "Period life expectancy at birth - Sex: all - Age: 0"
+    );
+    drawChart(
+      "svg#lineplot2",
+      "pm25-air-pollution.csv",
+      "PM2.5 Concentration (µg/m³)",
+      "Concentrations of fine particulate matter (PM2.5) - Residence area type: Total"
+    );
+
+  </script>
+</body>
+
+</html>
