@@ -2,6 +2,8 @@
 
 This project visualizes the relationship between air pollution (PM2.5 concentration) and life expectancy across countries from 2010-2019 using interactive data visualizations.
 
+[Click here to view the project.](https://raw.githack.com/ybazger/air-quality-and-life-expectancy-viz/main/index.html)
+
 ## Data Sources
 
 - **Life Expectancy**: Country-level life expectancy data by year ([Our World in Data](https://ourworldindata.org/life-expectancy))
